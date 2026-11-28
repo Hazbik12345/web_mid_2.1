@@ -1,215 +1,368 @@
 /*
-  Student Names: [Full name 1], [Full name 2], [Full name 3]
-  Student IDs: [ID 1], [ID 2], [ID 3]
+  Student Names: Aibek Bolatbekuly, Kainar Koshentay, Khamza Ryskul
+  Student IDs: 240116030, 240116032, 240116080
   Course: PED 379 — Web Programming
   Section: [Section number]
   Assignment: Midterm 2 Project
+
+  File: app.js — PromptCraft
+  Part 2 (Participant 2): client-side form validation and UI state.
+  - intercepts submit with event.preventDefault()
+  - validates the draft prompt (empty, >= 3 words, <= 300 chars,
+    forbidden symbols, profanity) and the selected goal / mode
+  - shows custom error and success messages in the page (no alert())
+  - when the form is valid it dispatches a "prompt:valid" CustomEvent;
+    Participant 3's fetch() code listens for it (see bottom of file)
+  Load with:  <script src="app.js" defer></script>
 */
 
-'use strict';
+"use strict";
 
-const API_BASE_URL = 'https://api.datamuse.com/words';
-const MAX_KEYWORDS = 4;
-const MAX_SUGGESTIONS = 6;
-const REQUEST_TIMEOUT_MS = 8000;
+/* ==========================================================
+   1. CONFIG
+   ========================================================== */
+const MIN_WORDS = 3;
+const MAX_CHARS = 300;
 
-const STOP_WORDS = new Set([
-  'a', 'an', 'the', 'and', 'or', 'but', 'for', 'to', 'of', 'in', 'on', 'at',
-  'by', 'with', 'about', 'from', 'as', 'is', 'are', 'was', 'be', 'it', 'this',
-  'that', 'my', 'me', 'i', 'you', 'your', 'we', 'our', 'can', 'please', 'some'
-]);
+// Characters that are not allowed in a prompt:  # $ % { } < >
+const FORBIDDEN_SYMBOLS = /[#$%{}<>]/g;
 
-const MODE_PARAMS = {
-  syn: ['rel_syn'],
-  related: ['ml'],
-  both: ['rel_syn', 'ml']
-};
+// Small English block-list (whole words only, case-insensitive)
+const PROFANITY_LIST = [
+  "fuck", "fucking", "shit", "bitch", "bastard", "asshole",
+  "dick", "cunt", "damn", "crap", "slut", "whore", "nigger", "faggot"
+];
+const PROFANITY_REGEX = new RegExp(`\\b(${PROFANITY_LIST.join("|")})\\b`, "i");
 
-let lastRequest = null;
+const ALLOWED_MODES = ["synonyms", "related", "both"];
 
-function extractKeywords(promptText) {
-  const words = promptText
-    .toLowerCase()
-    .split(/\s+/)
-    .map((word) => word.replace(/[^a-z-]/g, ''))
-    .filter((word) => word.length >= 3 && !STOP_WORDS.has(word));
+/* ==========================================================
+   2. DOM REFERENCES (found by id — see index.html)
+   ========================================================== */
+const form = document.getElementById("prompt-form");
+const promptInput = document.getElementById("prompt-input");
+const goalSelect = document.getElementById("goal-select");
+const modeInputs = document.querySelectorAll('input[name="mode"]');
+const wordCounter = document.getElementById("word-counter");
+const clearButton = document.getElementById("clear-btn");
+const formMessage = document.getElementById("form-message");
+const ruleChips = document.querySelectorAll("[data-rule]"); // chips under the form
+const highlightLayer = document.getElementById("prompt-highlight"); // overlay behind textarea (optional)
 
-  return [...new Set(words)].slice(0, MAX_KEYWORDS);
+// Becomes true after the first submit attempt, so errors are not
+// shown while the user is still typing for the first time.
+let submitAttempted = false;
+
+/* ==========================================================
+   3. HELPERS
+   ========================================================== */
+
+/** Remove extra spaces/newlines so "a   b\n c" becomes "a b c". */
+function normalizeText(text) {
+  return text.replace(/\s+/g, " ").trim();
 }
 
-async function fetchWords(param, word) {
-  const url = `${API_BASE_URL}?${param}=${encodeURIComponent(word)}&max=10`;
-
-  const controller = new AbortController();
-  const timerId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-
-  try {
-    const response = await fetch(url, { signal: controller.signal });
-
-    if (!response.ok) {
-      throw new Error(`Datamuse answered with HTTP ${response.status}`);
-    }
-
-    return await response.json();
-  } finally {
-    clearTimeout(timerId);
-  }
+/** Number of words in a string. */
+function countWords(text) {
+  const clean = normalizeText(text);
+  return clean === "" ? 0 : clean.split(" ").length;
 }
 
-async function getSuggestionsForKeyword(keyword, mode) {
-  const params = MODE_PARAMS[mode] || MODE_PARAMS.both;
+/** Number of forbidden symbols in a string. */
+function countForbiddenSymbols(text) {
+  const matches = text.match(FORBIDDEN_SYMBOLS);
+  return matches ? matches.length : 0;
+}
 
-  const results = await Promise.all(params.map((param) => fetchWords(param, keyword)));
+/** Selected radio value (Synonyms / Related / Both) or "". */
+function getSelectedMode() {
+  const checked = document.querySelector('input[name="mode"]:checked');
+  return checked ? checked.value : "";
+}
 
-  const seen = new Set([keyword]);
-  const suggestions = [];
+/* ==========================================================
+   4. VALIDATION
+   Returns { isValid, errors[], stats } — it does NOT touch the DOM,
+   so the logic is easy to test and explain.
+   ========================================================== */
+function validatePrompt(rawText, goal, mode) {
+  const errors = [];
+  const text = normalizeText(rawText);
+  const words = countWords(text);
+  const symbols = countForbiddenSymbols(rawText);
+  const hasProfanity = PROFANITY_REGEX.test(text);
 
-  for (const item of results.flat()) {
-    if (!seen.has(item.word)) {
-      seen.add(item.word);
-      suggestions.push({ word: item.word, score: item.score || 0 });
+  // 1. required field
+  if (text === "") {
+    errors.push({ field: "prompt", message: "Prompt is required — type something first" });
+  } else {
+    // 2. minimum length in words
+    if (words < MIN_WORDS) {
+      errors.push({ field: "prompt", message: "Prompt is too short — add some context" });
+    }
+    // 3. maximum length in characters
+    if (rawText.length > MAX_CHARS) {
+      errors.push({
+        field: "prompt",
+        message: `Prompt is too long — ${rawText.length}/${MAX_CHARS} characters`
+      });
+    }
+    // 4. forbidden symbols and profanity (same message as in the design)
+    if (symbols > 0 || hasProfanity) {
+      errors.push({
+        field: "prompt",
+        message: "Remove symbols like # $ % { } < > — profanity won’t pass either"
+      });
     }
   }
 
-  suggestions.sort((a, b) => b.score - a.score);
+  // 5. context: goal must be chosen
+  if (goal === "") {
+    errors.push({ field: "goal", message: "Choose a goal for your prompt" });
+  }
+
+  // 6. mode must be one of the allowed values
+  if (!ALLOWED_MODES.includes(mode)) {
+    errors.push({ field: "mode", message: "Choose a suggestion type: Synonyms, Related or Both" });
+  }
 
   return {
-    keyword: keyword,
-    suggestions: suggestions.slice(0, MAX_SUGGESTIONS)
+    isValid: errors.length === 0,
+    errors,
+    stats: { text, words, symbols, hasProfanity, chars: rawText.length }
   };
 }
 
-async function loadSuggestions(promptText, mode = 'both') {
-  lastRequest = { promptText, mode };
-  const keywords = extractKeywords(promptText);
+/* ==========================================================
+   5. UI UPDATES (DOM manipulation)
+   textContent is used everywhere instead of innerHTML, so user input
+   can never be interpreted as HTML (protection against XSS).
+   ========================================================== */
 
-  if (keywords.length === 0) {
-    showState('empty');
-    return;
+/** Live counter under the textarea: "7 words · 49/300" or "7 symbols". */
+function updateCounter() {
+  const raw = promptInput.value;
+  const words = countWords(raw);
+  const symbols = countForbiddenSymbols(raw);
+
+  if (symbols > 0) {
+    wordCounter.textContent = `${symbols} ${symbols === 1 ? "symbol" : "symbols"}`;
+    wordCounter.classList.add("is-error");
+  } else {
+    wordCounter.textContent =
+      `${words} ${words === 1 ? "word" : "words"} · ${raw.length}/${MAX_CHARS}`;
+    wordCounter.classList.toggle("is-error", raw.length > MAX_CHARS);
   }
+}
 
-  showState('loading');
-  setSubmitDisabled(true);
+/**
+ * Highlights forbidden symbols and profanity inside the text.
+ * A transparent layer sits behind the textarea with the same text;
+ * only the <mark> elements are visible (red background), so the user
+ * sees exactly which characters are wrong — like in the design.
+ * Nodes are built with textContent, never innerHTML.
+ */
+function updateHighlight() {
+  if (!highlightLayer) return;
+  const raw = promptInput.value;
+  const pattern = new RegExp(`([#$%{}<>]|\\b(?:${PROFANITY_LIST.join("|")})\\b)`, "gi");
 
-  try {
-    const groups = await Promise.all(
-      keywords.map((keyword) => getSuggestionsForKeyword(keyword, mode))
-    );
-
-    const groupsWithWords = groups.filter((group) => group.suggestions.length > 0);
-
-    if (groupsWithWords.length === 0) {
-      showState('empty');
+  highlightLayer.textContent = ""; // clear old content
+  raw.split(pattern).forEach((part, index) => {
+    if (part === "") return;
+    // split() with a capture group puts the matches at odd indexes
+    if (index % 2 === 1) {
+      const mark = document.createElement("mark");
+      mark.textContent = part;
+      highlightLayer.appendChild(mark);
     } else {
-      renderSuggestions(groupsWithWords);
-      showState('success');
+      highlightLayer.appendChild(document.createTextNode(part));
     }
-  } catch (error) {
-    const message = error.name === 'AbortError'
-      ? 'The dictionary took too long to answer. Please try again.'
-      : 'Could not reach the Datamuse dictionary. Check your internet connection and try again.';
-    showError(message);
-  } finally {
-    setSubmitDisabled(false);
-  }
+  });
+  // a trailing newline would collapse in the layer, so add an invisible character
+  if (raw.endsWith("\n")) highlightLayer.appendChild(document.createTextNode("\u200b"));
+  highlightLayer.scrollTop = promptInput.scrollTop;
 }
 
-const STATES = ['loading', 'success', 'empty', 'error'];
+/** Marks the three rule chips (≥ 3 words, no profanity, no symbols). */
+function updateRuleChips() {
+  const raw = promptInput.value;
+  const state = {
+    "min-words": countWords(raw) >= MIN_WORDS,
+    "no-profanity": !PROFANITY_REGEX.test(raw),
+    "no-symbols": countForbiddenSymbols(raw) === 0
+  };
 
-function showState(stateName) {
-  for (const name of STATES) {
-    const element = document.getElementById(`state-${name}`);
-    if (element) {
-      element.hidden = name !== stateName;
-    }
-  }
-}
-
-function showError(message) {
-  const errorText = document.getElementById('error-text');
-  if (errorText) {
-    errorText.textContent = message;
-  }
-  showState('error');
-}
-
-function setSubmitDisabled(isDisabled) {
-  const submitButton = document.querySelector('#prompt-form button[type="submit"]');
-  if (submitButton) {
-    submitButton.disabled = isDisabled;
-    submitButton.setAttribute('aria-busy', String(isDisabled));
-  }
-}
-
-function renderSuggestions(groups) {
-  const container = document.getElementById('suggestions');
-  const summary = document.getElementById('results-summary');
-  container.replaceChildren();
-
-  let total = 0;
-
-  for (const group of groups) {
-    const card = document.createElement('article');
-    card.className = 'suggestion-group';
-
-    const title = document.createElement('h3');
-    title.className = 'suggestion-group__keyword';
-    title.textContent = group.keyword;
-
-    const list = document.createElement('ul');
-    list.className = 'chips';
-
-    for (const item of group.suggestions) {
-      const listItem = document.createElement('li');
-      const chip = document.createElement('button');
-      chip.type = 'button';
-      chip.className = 'chip';
-      chip.textContent = item.word;
-      chip.dataset.keyword = group.keyword;
-      chip.dataset.word = item.word;
-      chip.setAttribute('aria-pressed', 'false');
-      chip.addEventListener('click', handleChipClick);
-
-      listItem.appendChild(chip);
-      list.appendChild(listItem);
-      total += 1;
-    }
-
-    card.append(title, list);
-    container.appendChild(card);
-  }
-
-  if (summary) {
-    summary.textContent = `Found ${total} suggestions for ${groups.length} keyword(s). Click a word to put it into your prompt.`;
-  }
-}
-
-function handleChipClick(event) {
-  const chip = event.currentTarget;
-  const promptInput = document.getElementById('prompt-input');
-  if (!promptInput) {
-    return;
-  }
-
-  const { keyword, word } = chip.dataset;
-  const safeKeyword = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const pattern = new RegExp(`\\b${safeKeyword}\\b`, 'i');
-  promptInput.value = promptInput.value.replace(pattern, word);
-
-  const card = chip.closest('.suggestion-group');
-  card.querySelectorAll('.chip').forEach((other) => {
-    other.dataset.keyword = word;
-    other.setAttribute('aria-pressed', String(other === chip));
+  ruleChips.forEach((chip) => {
+    const rule = chip.dataset.rule;
+    if (!(rule in state)) return;
+    // Do not shout in red while the field is still empty.
+    const touched = raw !== "";
+    chip.classList.toggle("is-ok", touched && state[rule]);
+    chip.classList.toggle("is-bad", touched && !state[rule]);
   });
 }
 
-document.addEventListener('DOMContentLoaded', () => {
-  const retryButton = document.getElementById('retry-btn');
-  if (retryButton) {
-    retryButton.addEventListener('click', () => {
-      if (lastRequest) {
-        loadSuggestions(lastRequest.promptText, lastRequest.mode);
-      }
-    });
+/** Clears any previous message and error marks. */
+function resetFeedback() {
+  formMessage.textContent = "";
+  formMessage.className = "form-message";
+  formMessage.hidden = true;
+  promptInput.classList.remove("is-invalid", "is-valid");
+  promptInput.removeAttribute("aria-invalid");
+  goalSelect.classList.remove("is-invalid");
+  goalSelect.removeAttribute("aria-invalid");
+}
+
+/** Shows the red error box and marks the invalid controls. */
+function showErrors(errors) {
+  resetFeedback();
+
+  errors.forEach((error) => {
+    const line = document.createElement("p");
+    line.textContent = error.message;
+    formMessage.appendChild(line);
+  });
+
+  formMessage.classList.add("form-message--error");
+  formMessage.setAttribute("role", "alert");
+  formMessage.hidden = false;
+
+  const fields = errors.map((e) => e.field);
+  if (fields.includes("prompt")) {
+    promptInput.classList.add("is-invalid");
+    promptInput.setAttribute("aria-invalid", "true");
   }
-});
+  if (fields.includes("goal")) {
+    goalSelect.classList.add("is-invalid");
+    goalSelect.setAttribute("aria-invalid", "true");
+  }
+}
+
+/** Shows the green success box. */
+function showSuccess(message) {
+  resetFeedback();
+  const line = document.createElement("p");
+  line.textContent = message;
+  formMessage.appendChild(line);
+
+  formMessage.classList.add("form-message--success");
+  formMessage.setAttribute("role", "status");
+  formMessage.hidden = false;
+  promptInput.classList.add("is-valid");
+}
+
+/** Moves the keyboard focus to the first invalid control. */
+function focusFirstError(errors) {
+  const first = errors[0].field;
+  if (first === "goal") goalSelect.focus();
+  else if (first === "mode") modeInputs[0].focus();
+  else promptInput.focus();
+}
+
+/* ==========================================================
+   6. EVENT HANDLERS
+   ========================================================== */
+
+/** Typing: update counter and chips; re-validate if user already tried to submit. */
+function handleInput() {
+  updateCounter();
+  updateRuleChips();
+  updateHighlight();
+
+  if (submitAttempted) {
+    const result = validatePrompt(promptInput.value, goalSelect.value, getSelectedMode());
+    if (result.isValid) {
+      resetFeedback();
+    } else {
+      showErrors(result.errors);
+    }
+  }
+}
+
+/** Submit: stop the browser reload, validate, then show error or success. */
+function handleSubmit(event) {
+  event.preventDefault(); // do not reload the page / send the form to a server
+  submitAttempted = true;
+
+  const result = validatePrompt(promptInput.value, goalSelect.value, getSelectedMode());
+
+  if (!result.isValid) {
+    showErrors(result.errors);
+    focusFirstError(result.errors);
+    return; // invalid data is NOT processed further
+  }
+
+  showSuccess("Prompt accepted — analyzing your vocabulary…");
+
+  // Hand the clean data to the API part (Participant 3).
+  document.dispatchEvent(
+    new CustomEvent("prompt:valid", {
+      detail: {
+        prompt: result.stats.text,
+        goal: goalSelect.value,
+        mode: getSelectedMode()
+      }
+    })
+  );
+}
+
+/** Clear button: reset the whole form and its feedback. */
+function handleClear() {
+  form.reset();
+  submitAttempted = false;
+  resetFeedback();
+  updateCounter();
+  updateRuleChips();
+  updateHighlight();
+  document.dispatchEvent(new CustomEvent("prompt:cleared"));
+  promptInput.focus();
+}
+
+/** Ctrl/Cmd + Enter submits the form from inside the textarea. */
+function handleKeydown(event) {
+  if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+    event.preventDefault();
+    form.requestSubmit();
+  }
+}
+
+/* ==========================================================
+   7. INIT — listeners are attached in JS, no inline onclick/onsubmit
+   ========================================================== */
+function init() {
+  if (!form || !promptInput || !goalSelect || !wordCounter || !formMessage) {
+    console.warn("PromptCraft: form elements not found — check ids in index.html");
+    return;
+  }
+
+  form.setAttribute("novalidate", ""); // we show our own messages, not browser bubbles
+  formMessage.hidden = true;
+
+  form.addEventListener("submit", handleSubmit);
+  promptInput.addEventListener("input", handleInput);
+  promptInput.addEventListener("keydown", handleKeydown);
+  goalSelect.addEventListener("change", handleInput);
+  modeInputs.forEach((radio) => radio.addEventListener("change", handleInput));
+  if (clearButton) clearButton.addEventListener("click", handleClear);
+  // keep the highlight layer scrolled together with the textarea
+  promptInput.addEventListener("scroll", () => {
+    if (highlightLayer) highlightLayer.scrollTop = promptInput.scrollTop;
+  });
+
+  updateCounter();
+  updateRuleChips();
+  updateHighlight();
+}
+
+init();
+
+/* ==========================================================
+   8. HOOK FOR PARTICIPANT 3 (REST API)
+   Put this in your part of app.js:
+
+   document.addEventListener("prompt:valid", (event) => {
+     const { prompt, goal, mode } = event.detail;
+     runAnalysis(prompt, goal, mode);   // fetch() + 4 states
+   });
+   ========================================================== */
