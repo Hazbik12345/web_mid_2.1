@@ -2,7 +2,7 @@
 
 **Course:** PED 379 — Web Programming · **Assignment:** Midterm 2 Project · **Section:** [Section number]
 
-PromptCraft is a student web app that teaches how to write better prompts for AI tools. You paste a weak draft prompt (for example, *"explain photosynthesis simply for my biology test"*). The app finds the vague keywords and suggests stronger synonyms and related terms from a free dictionary API. Click a suggestion to put it into your prompt.
+PromptCraft is a student web app that teaches how to write better prompts for AI tools. You paste a weak draft prompt (for example, "explain photosynthesis simply for my biology test"). The app finds the vague keywords and suggests stronger synonyms and related terms from a free dictionary API. Click a suggestion to put it into your prompt.
 
 **Target users:** students who use ChatGPT, Claude, Copilot and similar tools for studying and want clearer, more specific answers.
 
@@ -10,18 +10,16 @@ PromptCraft is a student web app that teaches how to write better prompts for AI
 - **Repository:** [GitHub repository link]
 - **Design (Canva):** [Canva link or exported design in `assets/images/`]
 
----
-
 ## Features
 
 - **Prompt analysis form.** Labelled textarea, prompt goal select and suggestion-type options (synonyms / related / both).
-- **Client-side validation.** Submission is intercepted with `event.preventDefault()`. A prompt must have at least 3 words and no profanity or junk symbols (`# $ % { } < >`…). Custom error messages appear on the page.
+- **Client-side validation.** Submission is intercepted with `event.preventDefault()`. The prompt is required, must have at least 3 words and at most 300 characters, and must not contain profanity or junk symbols (`# $ % { } < >`). A goal and a suggestion type must be selected. Custom error and success messages appear on the page, forbidden symbols are highlighted inside the textarea, and a live word counter and rule chips show the state while typing.
 - **Live REST API data.** Keywords are extracted from the prompt, and suggestions are fetched from Datamuse with `fetch()` + `async/await`.
 - **Four visible request states:**
   - **Loading:** "Analyzing your vocabulary…" and the submit button is disabled.
   - **Success:** suggestion chips are grouped by keyword.
   - **Empty:** the API returned `[]` (for example, for `asdasd`), so "No improvements found" with tips.
-  - **Error:** network failure, HTTP error or timeout, caught with `try/catch`, with a **Retry** button.
+  - **Error:** network failure, HTTP error or timeout, caught with `try/catch`, with a Retry button.
 - **Interactive chips.** Clicking a suggestion replaces the keyword in your prompt.
 - **Responsive layout.** Built with Flexbox/Grid and a mobile media query.
 
@@ -35,8 +33,7 @@ No build step, no dependencies, no API key.
    cd [repository folder]
    ```
 2. Open `index.html` in a browser, or use the VS Code **Live Server** extension. An internet connection is needed for the API.
-
-**To test the error state:** open DevTools → **Network** → set throttling to **Offline**, then submit the form.
+3. To test the error state: open DevTools → Network → set throttling to **Offline**, then submit the form.
 
 ## Project structure
 
@@ -52,6 +49,24 @@ project-root/
     └── images/
 ```
 
+## How the two parts of `app.js` work together
+
+1. **Section 1 (validation)** handles the form `submit` event, calls `event.preventDefault()` and runs `validatePrompt()`. Invalid data stops here and an error message is shown.
+2. If the data is valid, section 1 dispatches a custom event `prompt:valid` with `{ prompt, goal, mode }`.
+3. **Section 2 (API)** listens for this event and starts the request:
+   ```js
+   document.addEventListener("prompt:valid", (event) => {
+     const { prompt, mode } = event.detail;
+     loadSuggestions(prompt, mode);
+   });
+   ```
+   The API code never reads the form directly, so only validated data reaches the API.
+4. When a chip is clicked, the prompt text is replaced and an `input` event is dispatched, so the counter, rule chips and highlighting update:
+   ```js
+   promptInput.value = newText;
+   promptInput.dispatchEvent(new Event("input"));
+   ```
+
 ## API information
 
 | | |
@@ -59,39 +74,49 @@ project-root/
 | **API** | [Datamuse API](https://www.datamuse.com/api/) |
 | **Auth** | None — no API key required |
 | **Endpoints used** | `GET https://api.datamuse.com/words?rel_syn={word}&max=10` (synonyms)<br>`GET https://api.datamuse.com/words?ml={word}&max=10` (related terms, "means like") |
+| **Mode** | `synonyms` → `rel_syn`; `related` → `ml`; `both` → both requests |
 | **Response** | JSON array: `[{ "word": "clarify", "score": 2245 }, …]`; empty array `[]` when nothing is found |
 | **Language** | English vocabulary only, so prompts should be written in English |
 | **Limits** | Free, up to 100,000 requests per day without a key |
 
-**How the app uses it (`app.js`, section 2):**
+How the app uses it (`app.js`, section 2):
 
-1. `extractKeywords()` lowercases the prompt, removes stop words ("for", "my", "the"…) and keeps up to 4 keywords.
-2. `fetchWords()` sends one `fetch()` request. It checks `response.ok`, because `fetch` does not throw on 404/500. It parses JSON with `response.json()` and cancels the request after 8 seconds with `AbortController`.
-3. `getSuggestionsForKeyword()` runs the requests in parallel with `Promise.all`, merges them, removes duplicates and sorts by score.
-4. `loadSuggestions()` is the main function. It shows the loading state, waits for all keywords, then shows success, empty or error. The `try/catch/finally` re-enables the button in every case.
-5. `renderSuggestions()` builds the chips with `createElement` and `textContent`, not `innerHTML`, so API data can never inject HTML.
+- `extractKeywords()` lowercases the prompt, removes stop words ("for", "my", "the"…) and keeps up to 4 keywords.
+- `fetchWords()` sends one `fetch()` request. It checks `response.ok`, because `fetch` does not throw on 404/500. It parses JSON with `response.json()` and cancels the request after 8 seconds with `AbortController`.
+- `getSuggestionsForKeyword()` runs the requests in parallel with `Promise.all`, merges them, removes duplicates and sorts by score.
+- `loadSuggestions()` is the main function. It shows the loading state, waits for all keywords, then shows success, empty or error. The `try/catch/finally` re-enables the button in every case.
+- `renderSuggestions()` builds the chips with `createElement` and `textContent`, not `innerHTML`, so API data can never inject HTML.
 
-### Security
+## Security
 
 - Datamuse needs **no API key**, so there are no secrets in this repository.
 - `.gitignore` excludes `.env` files, in case a keyed API is added later.
 - Before submission we checked the code and the commit history:
   `git grep -i -E "api[_-]?key|token|secret|password"` and `git log -p | grep -i -E "api[_-]?key|token|secret"`. Neither found anything.
+- User input is never inserted with `innerHTML`; messages and chips use `textContent`.
 - Note: a key placed in front-end JavaScript is visible to anyone in DevTools. A keyed API would need a small server-side proxy.
 
 ## Team and roles
 
 | Member | Student ID | Role | Main files |
 |---|---|---|---|
-| [Full name 1] | [ID] | Canva design, semantic HTML5, responsive CSS3 | `index.html`, `styles.css`, Canva |
-| [Full name 2] | [ID] | Form validation, event handling, UI messages | `app.js` (section 1) |
-| [Full name 3] | [ID] | REST API integration, 4 states, security, README & AGENTS | `app.js` (section 2), `README.md`, `AGENTS.md` |
+| Aibek Bolatbekuly | 240116030 | Canva design, semantic HTML5, responsive CSS3 | `index.html`, `styles.css`, Canva |
+| Kainar Koshentay | 240116032 | Form validation, event handling, UI messages | `app.js` (section 1) |
+| Khamza Ryskul | 240116080 | REST API integration, 4 states, security, README & AGENTS | `app.js` (section 2), `README.md`, `AGENTS.md` |
+
+**Participant 2 — implemented in `app.js` (section 1):**
+
+- form submit interception with `event.preventDefault()` and all listeners via `addEventListener` (no inline handlers);
+- validation: required field, minimum 3 words, maximum 300 characters, forbidden symbols `# $ % { } < >`, profanity filter, required goal and suggestion type;
+- custom error and success messages rendered in the page (`textContent`, `role="alert"` / `role="status"`, `aria-invalid`);
+- live word/character counter, rule chips, and highlighting of forbidden symbols inside the textarea;
+- the `prompt:valid` custom event that passes validated data to the API module.
 
 ### Individual contributions (see commit history)
 
-- **[Full name 1]:** [e.g. "Canva layout desktop + mobile", "index.html structure", "form styles", "mobile media query" — link commits]
-- **[Full name 2]:** [e.g. "preventDefault submit handler", "word-count and symbol validation", "custom error messages" — link commits]
-- **[Full name 3]:** [e.g. "fetchWords with response.ok check", "four-state switching", "chip rendering", "README / AGENTS" — link commits]
+- **Aibek Bolatbekuly:** [e.g. "Canva layout desktop + mobile", "index.html structure", "form styles", "mobile media query" — link commits]
+- **Kainar Koshentay:** [e.g. "preventDefault submit handler", "word-count and symbol validation", "custom error messages", "symbol highlight" — link commits]
+- **Khamza Ryskul:** [e.g. "fetchWords with response.ok check", "four-state switching", "chip rendering", "README / AGENTS" — link commits]
 
 All members tested the app and prepared for the defense together.
 
@@ -103,6 +128,7 @@ We used AI assistants during this project. Everything they produced was reviewed
 |---|---|---|---|
 | Planning | Claude (Anthropic) | Suggested the split of tasks between three members and a requirements checklist | Chose the project idea, agreed on roles, adjusted the plan |
 | Design | Claude (Anthropic) | Generated several design concepts and mockups (desktop, mobile, form/API states) that we used as reference | Chose the final direction, asked for changes (colors, fonts, language), recreated the design in Canva |
+| Coding — validation (`app.js` section 1) | Claude (Anthropic) | Drafted `validatePrompt()`, error/success rendering, counter, rule chips, the symbol-highlight overlay, and a test `index.html` / `styles.css` | Kainar Koshentay read and understood every function, tested all cases in the browser (short prompt, empty, symbols, profanity, 300+ characters, no goal, valid prompt, Clear), adjusted [what you changed] |
 | Coding — API section (`app.js` section 2) | Claude (Anthropic) | Drafted the fetch / async-await / try-catch logic, the four-state switching and the chip rendering, with comments | Read and understood every line, tested all four states (including Offline mode), connected it to our HTML and validation |
 | Coding — other files | [GitHub Copilot / Claude / none] | [describe, e.g. "autocompleted CSS properties"] | [describe] |
 | Documentation | Claude (Anthropic) | Drafted the structure of README.md and AGENTS.md | Filled in our names, roles, links and checked every statement |
