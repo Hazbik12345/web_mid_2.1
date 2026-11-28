@@ -38,8 +38,8 @@ This file tells any AI assistant (GitHub Copilot, Claude, ChatGPT…) how to hel
 Every source file starts with this header, using the comment syntax of its file type:
 
 ```
-Student Names: [Full names]
-Student IDs: [Student IDs]
+Student Names: Aibek Bolatbekuly, Kainar Koshentay, Khamza Ryskul
+Student IDs: 240116030, 240116032, 240116080
 Course: PED 379 — Web Programming
 Section: [Section number]
 Assignment: Midterm 2 Project
@@ -100,7 +100,7 @@ We record the main prompts we gave to AI tools here. This supports the AI disclo
 |---|---|---|---|---|
 | 2026-11-23 | [Name] | Claude | "Design a website for PromptCraft (dark, terminal style), then a brighter version, then a calmer version, in English" | Design mockups and states |
 | 2026-11-28 | [Name] | Claude | "Help with part 3: Datamuse fetch with async/await, try/catch, four states, README and AGENTS" | API section of `app.js`, docs draft |
-| 2026-11-28 | [Name 2] | Claude | "Part 2: write JS for form validation (preventDefault, min 3 words, forbidden symbols, profanity, custom error/success messages) following the Midterm 2 requirements and the design" | Section 1 of `app.js` (validation) |
-| 2026-11-28 | [Name 2] | Claude | "Make a test index.html and styles.css, highlight forbidden symbols in the textarea, write defense Q&A" | Test page, highlight overlay, defense preparation |
-| 2026-11-28 | [Name 2] | Claude | "Where do we put the API key?" / "Check our README and AGENTS.md against my JS" | Security explanation, docs consistency |
+| 2026-11-28 | Kainar Koshentay | Claude | "Part 2: write JS for form validation (preventDefault, min 3 words, forbidden symbols, profanity, custom error/success messages) following the Midterm 2 requirements and the design" | Section 1 of `app.js` (validation) |
+| 2026-11-28 | Kainar Koshentay | Claude | "Make a test index.html and styles.css, highlight forbidden symbols in the textarea, write defense Q&A" | Test page, highlight overlay, defense preparation |
+| 2026-11-28 | Kainar Koshentay | Claude | "Where do we put the API key?" / "Check our README and AGENTS.md against my JS" | Security explanation, docs consistency |
 | [date] | [Name] | [tool] | [prompt] | [result] |
